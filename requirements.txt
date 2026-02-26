@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+jinja2
+httpx
+pydantic
+python-binance
+py-clob-client==0.34.4
+web3
+eth-account
+aiosqlite
+pytest
+pytest-asyncio
+python-dotenv

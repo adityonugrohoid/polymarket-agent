@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymarket Agent Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 20px;
+        }
+        h1 { color: #58a6ff; margin-bottom: 20px; font-size: 1.5em; }
+        h2 { color: #8b949e; margin-bottom: 12px; font-size: 1.1em; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .card .label { color: #8b949e; font-size: 0.85em; margin-bottom: 4px; }
+        .card .value { font-size: 1.6em; font-weight: 600; }
+        .positive { color: #3fb950; }
+        .negative { color: #f85149; }
+        .neutral { color: #d2a8ff; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 30px;
+        }
+        th, td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #21262d;
+        }
+        th {
+            background: #161b22;
+            color: #8b949e;
+            font-weight: 500;
+            font-size: 0.85em;
+            text-transform: uppercase;
+        }
+        td { font-size: 0.9em; }
+        tr:hover { background: #161b22; }
+
+        .badge {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: 600;
+        }
+        .badge-buy { background: #0d3321; color: #3fb950; }
+        .badge-sell { background: #3d1214; color: #f85149; }
+        .badge-open { background: #2d1f00; color: #d29922; }
+        .badge-paper { background: #1f2937; color: #8b949e; }
+
+        .refresh-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .refresh-bar span { color: #484f58; font-size: 0.85em; }
+        .refresh-bar button {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .refresh-bar button:hover { background: #30363d; }
+    </style>
+</head>
+<body>
+    <h1>Polymarket Agent Dashboard</h1>
+
+    <div class="refresh-bar">
+        <span id="last-update">Last update: now</span>
+        <button onclick="location.reload()">Refresh</button>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <div class="label">Total P&amp;L</div>
+            <div class="value {% if summary.total_pnl > 0 %}positive{% elif summary.total_pnl < 0 %}negative{% else %}neutral{% endif %}">
+                ${{ "%.2f"|format(summary.total_pnl) }}
+            </div>
+        </div>
+        <div class="card">
+            <div class="label">Win Rate</div>
+            <div class="value {% if summary.win_rate >= 50 %}positive{% elif summary.win_rate > 0 %}negative{% else %}neutral{% endif %}">
+                {{ "%.1f"|format(summary.win_rate) }}%
+            </div>
+        </div>
+        <div class="card">
+            <div class="label">Total Trades</div>
+            <div class="value neutral">{{ summary.total_trades }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Open Positions</div>
+            <div class="value neutral">{{ summary.open }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Avg P&amp;L / Trade</div>
+            <div class="value {% if summary.avg_pnl > 0 %}positive{% elif summary.avg_pnl < 0 %}negative{% else %}neutral{% endif %}">
+                ${{ "%.2f"|format(summary.avg_pnl) }}
+            </div>
+        </div>
+        <div class="card">
+            <div class="label">Volume Traded</div>
+            <div class="value neutral">${{ "%.0f"|format(summary.total_volume) }}</div>
+        </div>
+    </div>
+
+    {% if open_trades %}
+    <h2>Open Positions</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Size</th>
+                <th>Entry</th>
+                <th>Score</th>
+                <th>Sentiment</th>
+                <th>Confidence</th>
+                <th>Opened</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in open_trades %}
+            <tr>
+                <td>{{ t.symbol | upper }}</td>
+                <td><span class="badge {% if t.side == 'BUY' %}badge-buy{% else %}badge-sell{% endif %}">{{ t.side }}</span></td>
+                <td>${{ "%.2f"|format(t.size_usd) }}</td>
+                <td>{{ "%.4f"|format(t.entry_price) }}</td>
+                <td>{{ "%.2f"|format(t.signal_score) }}</td>
+                <td>{{ t.sentiment }}</td>
+                <td>{{ "%.2f"|format(t.confidence) }}</td>
+                <td>{{ t.opened_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <h2>Trade History</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Size</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>P&amp;L</th>
+                <th>Type</th>
+                <th>Score</th>
+                <th>Opened</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in trades %}
+            <tr>
+                <td>{{ t.symbol | upper }}</td>
+                <td><span class="badge {% if t.side == 'BUY' %}badge-buy{% else %}badge-sell{% endif %}">{{ t.side }}</span></td>
+                <td>${{ "%.2f"|format(t.size_usd) }}</td>
+                <td>{{ "%.4f"|format(t.entry_price) }}</td>
+                <td>{% if t.exit_price %}{{ "%.4f"|format(t.exit_price) }}{% else %}<span class="badge badge-open">OPEN</span>{% endif %}</td>
+                <td class="{% if t.pnl and t.pnl > 0 %}positive{% elif t.pnl and t.pnl < 0 %}negative{% else %}neutral{% endif %}">
+                    {% if t.pnl %}${{ "%.2f"|format(t.pnl) }}{% else %}-{% endif %}
+                </td>
+                <td><span class="badge badge-paper">{% if t.is_paper %}PAPER{% else %}LIVE{% endif %}</span></td>
+                <td>{{ "%.2f"|format(t.signal_score) }}</td>
+                <td>{{ t.opened_at }}</td>
+            </tr>
+            {% endfor %}
+            {% if not trades %}
+            <tr><td colspan="9" style="text-align:center; color:#484f58;">No trades yet</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+
+    <script>
+        // Auto-refresh every 30 seconds
+        setTimeout(() => location.reload(), 30000);
+        document.getElementById('last-update').textContent = 'Last update: ' + new Date().toLocaleTimeString();
+    </script>
+</body>
+</html>
