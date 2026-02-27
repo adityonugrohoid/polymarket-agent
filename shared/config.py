@@ -25,6 +25,14 @@ class Config(BaseModel):
     DASHBOARD_PORT: int = 8080
     DB_PATH: str = "data/trades.db"
 
+    # Simulation mode — synthetic markets with lagged odds
+    SIMULATION_MODE: bool = False
+    SIM_MARKETS_PER_SYMBOL: int = 3
+    SIM_STRIKE_SPREAD_PCT: float = 1.0
+    SIM_PRICE_LAG_SECONDS: float = 5.0
+    SIM_NOISE_PCT: float = 2.0
+    SIM_ODDS_INTERVAL: float = 1.0
+
     @classmethod
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""
@@ -48,6 +56,12 @@ class Config(BaseModel):
             COOLDOWN_SECONDS=int(os.getenv("COOLDOWN_SECONDS", "300")),
             DASHBOARD_PORT=int(os.getenv("DASHBOARD_PORT", "8080")),
             DB_PATH=os.getenv("DB_PATH", "data/trades.db"),
+            SIMULATION_MODE=os.getenv("SIMULATION_MODE", "false").lower() in ("true", "1", "yes"),
+            SIM_MARKETS_PER_SYMBOL=int(os.getenv("SIM_MARKETS_PER_SYMBOL", "3")),
+            SIM_STRIKE_SPREAD_PCT=float(os.getenv("SIM_STRIKE_SPREAD_PCT", "1.0")),
+            SIM_PRICE_LAG_SECONDS=float(os.getenv("SIM_PRICE_LAG_SECONDS", "5.0")),
+            SIM_NOISE_PCT=float(os.getenv("SIM_NOISE_PCT", "2.0")),
+            SIM_ODDS_INTERVAL=float(os.getenv("SIM_ODDS_INTERVAL", "1.0")),
         )
 
     @property

@@ -44,9 +44,9 @@ class PolymarketOddsFeed:
                         self._latest[market.token_id] = snapshot
                         await self.out_queue.put(snapshot)
                 except Exception as e:
-                    logger.warning(
+                    logger.debug(
                         f"CLOB fetch error: {e}",
-                        extra={"token_id": market.token_id},
+                        extra={"token_id": market.token_id[:20]},
                     )
 
             await asyncio.sleep(self.poll_interval)

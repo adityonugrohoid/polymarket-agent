@@ -26,6 +26,9 @@ from storage.db import Database
 from dashboard.main import app as dashboard_app, set_database
 
 logger = setup_logging("polymarket-agent")
+logger.propagate = False
+# Also configure root logger so module-level loggers (feeds.*, strategy.*) are visible
+setup_logging("", level=logging.INFO)
 
 
 class TradingAgent:
@@ -50,6 +53,7 @@ class TradingAgent:
         self.council: CouncilOrchestrator | None = None
         self.paper_trader: PaperTrader | None = None
         self.position_tracker: PositionTracker | None = None
+        self.sim_price_feed = None
 
     async def start(self):
         """Initialize and run all components."""
@@ -74,19 +78,34 @@ class TradingAgent:
             max_open_positions=self.config.MAX_OPEN_POSITIONS,
         )
 
-        # Discover markets
-        discovery = GammaDiscovery()
-        markets = await discovery.discover()
-        if not markets:
-            logger.warning("No crypto markets found on Polymarket, running in price-only mode")
-
-        # Feeds
+        # Binance feed (created before discovery — simulation needs get_latest_price)
         self.binance_feed = BinanceFeed(
             self.config.binance_symbols_list, self.price_queue
         )
-        self.odds_feed = PolymarketOddsFeed(
-            markets, self.odds_queue, poll_interval=5.0
-        )
+
+        # Discover markets + odds feed
+        if self.config.SIMULATION_MODE:
+            from feeds.simulation import SimulatedMarketGenerator, SimulatedOddsFeed, SimulatedPriceFeed
+            sim_gen = SimulatedMarketGenerator(self.config, self.binance_feed)
+            markets = sim_gen.generate_markets()
+            self.odds_feed = SimulatedOddsFeed(
+                markets, self.odds_queue, self.binance_feed, self.config
+            )
+            self.sim_price_feed = SimulatedPriceFeed(
+                self.binance_feed, self.price_queue, self.config
+            )
+            logger.info(
+                "SIMULATION MODE: using synthetic markets + price feed",
+                extra={"count": len(markets)},
+            )
+        else:
+            discovery = GammaDiscovery()
+            markets = await discovery.discover()
+            if not markets:
+                logger.warning("No crypto markets found on Polymarket, running in price-only mode")
+            self.odds_feed = PolymarketOddsFeed(
+                markets, self.odds_queue, poll_interval=5.0
+            )
         self.aggregator = FeedAggregator(
             self.price_queue, self.odds_queue, self.paired_queue, markets
         )
@@ -121,8 +140,12 @@ class TradingAgent:
         set_database(self.db)
 
         # Run all tasks
+        price_feed_coro = (
+            self.sim_price_feed.start() if self.config.SIMULATION_MODE
+            else self.binance_feed.start()
+        )
         tasks = [
-            asyncio.create_task(self.binance_feed.start(), name="binance"),
+            asyncio.create_task(price_feed_coro, name="price_feed"),
             asyncio.create_task(self.odds_feed.start(), name="odds"),
             asyncio.create_task(self.aggregator.start(), name="aggregator"),
             asyncio.create_task(self.detector.start(), name="detector"),
@@ -138,6 +161,8 @@ class TradingAgent:
 
         # Cleanup
         logger.info("Shutting down...")
+        if self.config.SIMULATION_MODE:
+            self.sim_price_feed.stop()
         self.binance_feed.stop()
         self.odds_feed.stop()
         self.aggregator.stop()
@@ -218,18 +243,24 @@ class TradingAgent:
     async def _run_dashboard(self):
         """Run the FastAPI dashboard."""
         import uvicorn
-        config = uvicorn.Config(
-            dashboard_app,
-            host="0.0.0.0",
-            port=self.config.DASHBOARD_PORT,
-            log_level="warning",
-        )
-        server = uvicorn.Server(config)
-        logger.info(
-            "Dashboard starting",
-            extra={"port": self.config.DASHBOARD_PORT},
-        )
-        await server.serve()
+        try:
+            config = uvicorn.Config(
+                dashboard_app,
+                host="0.0.0.0",
+                port=self.config.DASHBOARD_PORT,
+                log_level="warning",
+            )
+            server = uvicorn.Server(config)
+            logger.info(
+                "Dashboard starting",
+                extra={"port": self.config.DASHBOARD_PORT},
+            )
+            await server.serve()
+        except (SystemExit, OSError) as e:
+            logger.warning(
+                f"Dashboard failed to start: {e}. Agent continues without dashboard.",
+                extra={"port": self.config.DASHBOARD_PORT},
+            )
 
     def shutdown(self):
         self._shutdown.set()
