@@ -1,226 +1,362 @@
+<div align="center">
+
 # Polymarket AI Trading Agent
 
-An autonomous crypto trading agent that detects price divergences between Binance spot markets and Polymarket prediction market odds, then runs a council of 3 LLMs to make intelligent trade decisions.
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-55%20passed-brightgreen.svg)](#testing)
+[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
+**An autonomous crypto trading agent that detects price divergences between Binance and Polymarket prediction markets, then runs a council of 3 LLMs to make intelligent trade decisions.**
+
+[Getting Started](#getting-started) | [Architecture](#architecture) | [Configuration](#configuration) | [Examples](#example-output)
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+- [How It Works](#how-it-works)
+  - [Data Feeds](#1-data-feeds)
+  - [Divergence Detection](#2-divergence-detection)
+  - [Council of Models](#3-council-of-models)
+  - [Execution](#4-execution)
+  - [Risk Management](#5-risk-management)
+- [Simulation Mode](#simulation-mode)
+- [Example Output](#example-output)
+- [Project Structure](#project-structure)
+- [Testing](#testing)
+- [Database Schema](#database-schema)
+- [Roadmap](#roadmap)
+- [License](#license)
+- [Author](#author)
+
+## Features
+
+- **Real-time divergence detection** between Binance spot prices and Polymarket prediction market odds
+- **Council of 3 LLMs** — sentiment, confidence, and trade judge — with structured reasoning at every step
+- **Thinking-mode support** for reasoning models (extended thinking parsed from both response and thinking fields)
+- **Short-circuit logic** to skip expensive LLM calls when confidence is low
+- **Risk management** with per-trade limits, portfolio caps, and per-symbol cooldowns
+- **Paper trading** with full trade lifecycle logging to SQLite
+- **Simulation mode** with synthetic markets for development without live APIs
+- **Web dashboard** (FastAPI) for real-time monitoring of trades and P&L
+- **Async-first** architecture using `asyncio` throughout
+- **55 tests** covering all pipeline components
 
 ## Architecture
 
 ```
-Binance WebSocket ──► price_queue ──► FeedAggregator ──► DivergenceDetector ──► signal_queue
-                                          ▲                                         │
-Polymarket CLOB ────► odds_queue ─────────┘                                         ▼
-                                                                            CouncilOrchestrator
-                                                                           ┌────────┴────────┐
-                                                                           │  1. Sentiment    │ nemotron-3-nano:30b
-                                                                           │  2. Confidence   │ qwen3-next:80b
-                                                                           │  3. Trade Judge  │ gpt-oss:120b
-                                                                           └────────┬────────┘
-                                                                                    │
-                                                                                    ▼
-                                                                              PaperTrader
-                                                                                    │
-                                                                                    ▼
-                                                                           SQLite + Dashboard
+┌──────────────────┐     ┌──────────────────┐
+│  Binance WebSocket│     │  Polymarket CLOB │
+│  (or Simulated)  │     │  (or Simulated)  │
+└────────┬─────────┘     └────────┬─────────┘
+         │ price_queue            │ odds_queue
+         ▼                        ▼
+┌─────────────────────────────────────────────┐
+│              Feed Aggregator                │
+│         (pairs prices + odds by symbol)     │
+└────────────────────┬────────────────────────┘
+                     │ paired_queue
+                     ▼
+┌─────────────────────────────────────────────┐
+│           Divergence Detector               │
+│   momentum → implied odds → edge → score   │
+└────────────────────┬────────────────────────┘
+                     │ signal_queue
+                     ▼
+┌─────────────────────────────────────────────┐
+│          Council of Models                  │
+│                                             │
+│  ┌─────────────┐  ┌──────────────┐          │
+│  │  Sentiment   │→│  Confidence   │───┐     │
+│  │  (nemotron)  │  │  (qwen3)     │   │     │
+│  └─────────────┘  └──────────────┘   │     │
+│                                 < threshold? │
+│                                  ↓ yes  ↓ no│
+│                                SKIP  ┌──────┐│
+│                                      │Judge ││
+│                                      │(gpt) ││
+│                                      └──┬───┘│
+└─────────────────────────────────────────┼────┘
+                                          ▼
+┌─────────────────────────────────────────────┐
+│  Execution (Paper Trader / Order Manager)   │
+│  → Risk checks → Fill → Log to SQLite      │
+└────────────────────┬────────────────────────┘
+                     ▼
+┌─────────────────────────────────────────────┐
+│         FastAPI Dashboard (:8081)            │
+│      trades, P&L, open positions            │
+└─────────────────────────────────────────────┘
 ```
 
-## How It Works
+## Getting Started
 
-### 1. Data Feeds
-- **Binance WebSocket** streams real-time prices for BTC, ETH, SOL with rolling 20-tick momentum calculation
-- **Polymarket CLOB** polls prediction market odds every 5 seconds via midpoint API
-- **Feed Aggregator** pairs each price tick with the latest odds for the same symbol
+### Prerequisites
 
-### 2. Divergence Detection
-The strategy layer computes:
-- **Implied fair odds** = market odds + (momentum * 0.03) — a 1% price move adjusts odds by 3%
-- **Edge** = implied fair odds - market odds — the mispricing percentage
-- **Composite score** = weighted combination of edge (50%), momentum (30%), volume (20%)
+- Python 3.12+
+- [Ollama](https://ollama.com) API key (cloud) or local Ollama instance
+- Binance WebSocket access (or use simulation mode)
 
-Signals fire when edge > `MIN_EDGE_PCT` and score > `MIN_SIGNAL_SCORE`.
-
-### 3. Council of Models
-Three LLMs evaluate each signal sequentially:
-
-| Agent | Model | Role | Output |
-|-------|-------|------|--------|
-| Sentiment | nemotron-3-nano:30b | Fast sentiment classification | BULLISH / BEARISH / NEUTRAL + reasoning |
-| Confidence | qwen3-next:80b | Quantitative signal quality grading | Float 0.0-1.0 + reasoning |
-| Trade Judge | gpt-oss:120b | Final trade/skip decision with sizing | TRADE/SKIP + dollar amount + reasoning |
-
-**Short-circuit**: If confidence < `MIN_CONFIDENCE`, the pipeline skips the trade judge entirely.
-
-**Thinking-mode support**: All parsers handle models that use extended thinking (`think=True`). When the model produces a response field, it's parsed directly. When the model puts everything in the thinking field (common with reasoning models), the parser searches the full text and takes the last match to avoid echoed prompt content.
-
-### 4. Execution
-- **Paper Trading** (current): Simulates fills at market midpoint, logs to SQLite with full council reasoning
-- **Live Trading** (scaffolded): `OrderManager` + `PolymarketClient` for authenticated CLOB order placement on Polygon
-
-### 5. Risk Management
-Enforced at the execution layer before every trade:
-- Max open positions: `MAX_OPEN_POSITIONS` (default 3)
-- Max position size: `MAX_POSITION_SIZE` (default $50)
-- Max portfolio exposure: `MAX_CAPITAL` (default $1000)
-- Per-symbol cooldown: `COOLDOWN_SECONDS` after each trade
-
-## Simulation Mode
-
-Since Polymarket currently has no short-term crypto price markets (only long-dated events like "BTC hits $150k by June 2026"), the agent includes a full simulation layer for testing and development.
-
-`SIMULATION_MODE=true` activates:
-
-- **SimulatedMarketGenerator** — Creates synthetic 15-minute prediction markets at 3 strike levels per symbol (current price -1%, 0%, +1%). Example: "Will BTC be above $87,000.00 in 15 min?"
-- **SimulatedOddsFeed** — Computes odds from a deliberately lagged price buffer. Real price moves but odds use a 5-second-old price, naturally creating divergence opportunities
-- **SimulatedPriceFeed** — Gaussian random walk (mean +0.08%, stddev 1.2% per tick) injected into Binance feed's price history so momentum calculations work normally
-
-The simulation is fully self-contained — no external API calls needed (except Ollama for LLM inference). Removable by deleting `feeds/simulation.py` and the config branch in `agent.py`.
-
-### Odds Calculation
-```
-distance = (lagged_price - strike) / strike
-raw_odds = 0.5 + (distance * 10)        # 1% above strike = 0.6 odds
-odds = clamp(raw_odds + noise, 0.05, 0.95)
-```
-
-## Project Structure
-
-```
-polymarket-agent/
-├── agent.py                    # Main entry point, wires all components
-├── feeds/
-│   ├── binance_ws.py           # Binance WebSocket price streaming
-│   ├── polymarket_odds.py      # CLOB midpoint polling
-│   ├── gamma_discovery.py      # Polymarket market discovery via Gamma API
-│   ├── feed_aggregator.py      # Pairs price ticks with odds by symbol
-│   └── simulation.py           # Synthetic markets, odds, and prices
-├── strategy/
-│   ├── divergence_detector.py  # Core divergence detection algorithm
-│   ├── signal.py               # Composite signal scoring (edge, momentum, volume)
-│   └── thresholds.py           # Default strategy constants
-├── council/
-│   ├── orchestrator.py         # 3-agent pipeline with short-circuit logic
-│   ├── sentiment_agent.py      # Sentiment classification (Agent 1)
-│   ├── confidence_grader.py    # Confidence scoring 0-1 (Agent 2)
-│   ├── trade_judge.py          # Final TRADE/SKIP decision (Agent 3)
-│   └── prompts.py              # Prompt templates for all 3 agents
-├── execution/
-│   ├── paper_trader.py         # Simulated trade execution
-│   ├── order_manager.py        # Live Polymarket CLOB order placement
-│   ├── polymarket_client.py    # Authenticated CLOB client wrapper
-│   └── position_tracker.py     # Risk limits enforcement
-├── storage/
-│   ├── db.py                   # Async SQLite wrapper (aiosqlite)
-│   └── models.py               # Table schemas (trades, signals)
-├── shared/
-│   ├── config.py               # Environment variable management (Pydantic)
-│   ├── schemas.py              # Data models for the entire pipeline
-│   ├── ollama_client.py        # LLM client with thinking-mode support
-│   └── logging.py              # Structured JSON logging
-├── dashboard/
-│   ├── main.py                 # FastAPI web dashboard
-│   └── templates/index.html    # Dashboard HTML template
-├── tests/                      # 55 tests, 908 lines
-│   ├── test_simulation.py      # Simulation layer tests
-│   ├── test_divergence_detector.py
-│   ├── test_feed_aggregator.py
-│   ├── test_sentiment_agent.py
-│   ├── test_confidence_grader.py
-│   ├── test_trade_judge.py
-│   ├── test_orchestrator.py
-│   ├── test_paper_trader.py
-│   ├── test_signal.py
-│   └── test_config.py
-├── .env.example                # Configuration template
-└── requirements.txt            # Python dependencies
-```
-
-## Configuration
-
-Copy `.env.example` to `.env` and configure:
+### Installation
 
 ```bash
-# Trading
-TRADING_MODE=paper              # paper or live
+git clone https://github.com/adityonugrohoid/polymarket-agent.git
+cd polymarket-agent
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Configuration
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your settings:
+
+<details>
+<summary>Full configuration reference</summary>
+
+```bash
+# ── Trading ──────────────────────────────────────
+TRADING_MODE=paper                    # paper or live
 BINANCE_SYMBOLS=btcusdt,ethusdt,solusdt
 
-# LLM (Ollama Cloud or local)
-OLLAMA_HOST=https://ollama.com  # or http://localhost:11434
+# ── LLM (Ollama Cloud or local) ─────────────────
+OLLAMA_HOST=https://ollama.com        # or http://localhost:11434
 OLLAMA_API_KEY=your_key_here
 LLM_MODEL_SENTIMENT=nemotron-3-nano:30b
 LLM_MODEL_GRADER=qwen3-next:80b
 LLM_MODEL_JUDGE=gpt-oss:120b
 
-# Strategy thresholds
-MIN_EDGE_PCT=0.5                # Minimum mispricing % to trigger signal
-MIN_SIGNAL_SCORE=0.15           # Minimum composite score (0-1)
-MIN_CONFIDENCE=0.3              # LLM confidence threshold for trade judge
+# ── Strategy Thresholds ─────────────────────────
+MIN_EDGE_PCT=0.5                      # Minimum mispricing % to trigger signal
+MIN_SIGNAL_SCORE=0.15                 # Minimum composite score (0-1)
+MIN_CONFIDENCE=0.3                    # LLM confidence threshold for trade judge
 
-# Risk management
-MAX_CAPITAL=1000                # Total portfolio cap ($)
-MAX_POSITION_SIZE=50            # Per-trade limit ($)
-MAX_OPEN_POSITIONS=3            # Max concurrent positions
-COOLDOWN_SECONDS=30             # Per-symbol cooldown after trade
+# ── Risk Management ─────────────────────────────
+MAX_CAPITAL=1000                      # Total portfolio cap ($)
+MAX_POSITION_SIZE=50                  # Per-trade limit ($)
+MAX_OPEN_POSITIONS=3                  # Max concurrent positions
+COOLDOWN_SECONDS=30                   # Per-symbol cooldown after trade
 
-# Simulation (set SIMULATION_MODE=true to use synthetic feeds)
-SIMULATION_MODE=true
+# ── Simulation ──────────────────────────────────
+SIMULATION_MODE=true                  # Use synthetic feeds
 SIM_MARKETS_PER_SYMBOL=3
 SIM_STRIKE_SPREAD_PCT=1.0
 SIM_PRICE_LAG_SECONDS=5.0
 SIM_NOISE_PCT=2.0
 SIM_ODDS_INTERVAL=1.0
 
-# Infrastructure
+# ── Infrastructure ──────────────────────────────
 DASHBOARD_PORT=8081
 DB_PATH=data/trades.db
 ```
 
-## Running
+</details>
+
+### Usage
 
 ```bash
-# Setup
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# Configure
-cp .env.example .env
-# Edit .env with your Ollama API key
-
-# Run
+# Start the agent
 python agent.py
 
-# Dashboard available at http://localhost:8081
+# Dashboard at http://localhost:8081
 ```
 
-## Example Council Output
+## How It Works
+
+### 1. Data Feeds
+
+- **Binance WebSocket** streams real-time prices for BTC, ETH, SOL with rolling 20-tick momentum
+- **Polymarket CLOB** polls prediction market odds every 5s via midpoint API
+- **Feed Aggregator** pairs each price tick with the latest odds for the same symbol
+
+### 2. Divergence Detection
+
+The strategy layer computes:
+
+| Metric | Formula | Description |
+|--------|---------|-------------|
+| Implied fair odds | `market_odds + (momentum * 0.03)` | 1% price move = 3% odds adjustment |
+| Edge | `implied_fair - market_odds` | The mispricing percentage |
+| Composite score | `edge*0.5 + momentum*0.3 + volume*0.2` | Weighted signal strength (0-1) |
+
+Signals fire when `edge > MIN_EDGE_PCT` and `score > MIN_SIGNAL_SCORE`.
+
+### 3. Council of Models
+
+Three LLMs evaluate each signal sequentially:
+
+| # | Agent | Model | Role | Latency |
+|---|-------|-------|------|---------|
+| 1 | Sentiment | `nemotron-3-nano:30b` | Classify BULLISH / BEARISH / NEUTRAL | ~1.5s |
+| 2 | Confidence | `qwen3-next:80b` | Grade signal quality 0.0-1.0 | ~12-20s |
+| 3 | Trade Judge | `gpt-oss:120b` | Final TRADE/SKIP + position sizing | ~2s |
+
+**Short-circuit**: If confidence < `MIN_CONFIDENCE`, the trade judge is skipped entirely.
+
+**Thinking-mode support**: All parsers handle models that use extended thinking (`think=True`). When a response field exists, it's parsed directly. When models put everything in the thinking field, the parser searches the full text and takes the last match to avoid echoed prompt content.
+
+### 4. Execution
+
+| Mode | Status | Description |
+|------|--------|-------------|
+| Paper | **Active** | Simulates fills at market midpoint, logs to SQLite with full council reasoning |
+| Live | Scaffolded | `OrderManager` + `PolymarketClient` for authenticated CLOB orders on Polygon |
+
+### 5. Risk Management
+
+Enforced at the execution layer before every trade:
+
+| Control | Default | Description |
+|---------|---------|-------------|
+| `MAX_OPEN_POSITIONS` | 3 | Max concurrent positions |
+| `MAX_POSITION_SIZE` | $50 | Per-trade limit |
+| `MAX_CAPITAL` | $1,000 | Total portfolio exposure cap |
+| `COOLDOWN_SECONDS` | 30 | Per-symbol cooldown after trade |
+
+## Simulation Mode
+
+Since Polymarket currently has no short-term crypto price markets (only long-dated events like "BTC hits $150k by June 2026"), the agent includes a full simulation layer.
+
+Set `SIMULATION_MODE=true` to activate:
+
+| Component | Description |
+|-----------|-------------|
+| `SimulatedMarketGenerator` | Creates synthetic 15-min markets at 3 strike levels per symbol (-1%, 0%, +1%) |
+| `SimulatedOddsFeed` | Computes odds from a deliberately lagged price buffer (5s lag creates divergence) |
+| `SimulatedPriceFeed` | Gaussian random walk (mean +0.08%, stddev 1.2% per tick) |
+
+**Odds formula:**
+```python
+distance = (lagged_price - strike) / strike
+raw_odds = 0.5 + (distance * 10)          # 1% above strike → 0.6 odds
+odds = clamp(raw_odds + noise, 0.05, 0.95)
+```
+
+The simulation is fully self-contained (no external APIs except Ollama). Removable by deleting `feeds/simulation.py` and the config branch in `agent.py`.
+
+## Example Output
 
 A complete council evaluation cycle from a live simulation run:
 
 ```
-Signal: BTCUSDT | Price: $89,086.17 | Momentum: +2.22% | Edge: +6.67% | Score: 0.4671 | Direction: UP
+Signal: BTCUSDT | $89,086 | Momentum: +2.22% | Edge: +6.67% | Score: 0.47 | UP
 
-Agent 1 — Sentiment (nemotron-3-nano:30b, 1554ms):
-  BULLISH — "The upward momentum and positive edge indicate a bullish outlook."
+  Sentiment  (nemotron, 1554ms)  → BULLISH
+    "The upward momentum and positive edge indicate a bullish outlook."
 
-Agent 2 — Confidence (qwen3-next:80b, 15063ms):
-  0.47 — "Score below 0.5 indicates low confidence due to momentum sustainability
-          concerns despite positive edge."
+  Confidence (qwen3, 15063ms)    → 0.47
+    "Score below 0.5 indicates low confidence due to momentum
+     sustainability concerns despite positive edge."
 
-Agent 3 — Trade Judge (gpt-oss:120b, 1801ms):
-  SKIP, $0
+  Trade Judge (gpt-oss, 1801ms)  → SKIP, $0
 ```
 
 When the judge decides to trade:
 
 ```
-Signal: BTCUSDT | Edge: +6.58% | Score: 0.4606
+Signal: BTCUSDT | $87,822 | Momentum: +0.94% | Edge: +6.58% | Score: 0.46 | UP
 
-Agent 1 — Sentiment: BULLISH
-Agent 2 — Confidence: 0.46
-Agent 3 — Trade Judge: TRADE, $10
-  "Positive edge (+6.58%) suggests a favorable expected value despite low confidence,
-   so a modest $10 position limits risk while capturing upside."
+  Sentiment  → BULLISH
+  Confidence → 0.46
+  Trade Judge → TRADE, $10
+    "Positive edge (+6.58%) suggests a favorable expected value despite
+     low confidence, so a modest $10 position limits risk while
+     capturing upside."
 
-Paper trade executed: BUY btcusdt $10.00 @ 0.5096
+  ✓ Paper trade executed: BUY btcusdt $10.00 @ 0.5096
 ```
+
+## Project Structure
+
+```
+polymarket-agent/
+├── agent.py                        # Main entry point — wires all components
+│
+├── feeds/                          # Data ingestion layer
+│   ├── binance_ws.py               #   Binance WebSocket price streaming
+│   ├── polymarket_odds.py          #   CLOB midpoint polling
+│   ├── gamma_discovery.py          #   Market discovery via Gamma API
+│   ├── feed_aggregator.py          #   Pairs price ticks with odds
+│   └── simulation.py               #   Synthetic markets, odds, and prices
+│
+├── strategy/                       # Signal generation layer
+│   ├── divergence_detector.py      #   Core divergence detection algorithm
+│   ├── signal.py                   #   Composite signal scoring
+│   └── thresholds.py               #   Default strategy constants
+│
+├── council/                        # LLM decision layer
+│   ├── orchestrator.py             #   3-agent pipeline with short-circuit
+│   ├── sentiment_agent.py          #   Agent 1: sentiment classification
+│   ├── confidence_grader.py        #   Agent 2: confidence scoring 0-1
+│   ├── trade_judge.py              #   Agent 3: final TRADE/SKIP decision
+│   └── prompts.py                  #   Prompt templates
+│
+├── execution/                      # Trade execution layer
+│   ├── paper_trader.py             #   Simulated trade execution
+│   ├── order_manager.py            #   Live Polymarket CLOB orders
+│   ├── polymarket_client.py        #   Authenticated CLOB client
+│   └── position_tracker.py         #   Risk limits enforcement
+│
+├── storage/                        # Persistence layer
+│   ├── db.py                       #   Async SQLite wrapper (aiosqlite)
+│   └── models.py                   #   Table schemas
+│
+├── shared/                         # Shared utilities
+│   ├── config.py                   #   Environment config (Pydantic)
+│   ├── schemas.py                  #   Pipeline data models
+│   ├── ollama_client.py            #   LLM client with thinking-mode
+│   └── logging.py                  #   Structured JSON logging
+│
+├── dashboard/                      # Web monitoring
+│   ├── main.py                     #   FastAPI dashboard
+│   └── templates/index.html        #   Dashboard template
+│
+├── tests/                          # Test suite (55 tests)
+├── .env.example                    # Configuration template
+└── requirements.txt                # Python dependencies
+```
+
+## Testing
+
+```bash
+# Run all tests
+python -m pytest tests/ -q
+
+# Run with verbose output
+python -m pytest tests/ -v
+
+# Run specific module
+python -m pytest tests/test_simulation.py -v
+```
+
+**Test coverage:**
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| Divergence detector | 5 | Signal generation, thresholds |
+| Feed aggregator | 3 | Price+odds pairing |
+| Sentiment agent | 4 | BULLISH/BEARISH/NEUTRAL parsing |
+| Confidence grader | 4 | Float 0-1 parsing, clamping |
+| Trade judge | 4 | TRADE/SKIP + size parsing |
+| Orchestrator | 4 | Full pipeline, short-circuit |
+| Paper trader | 5 | Execution, risk limits, P&L |
+| Simulation | 11 | Market gen, odds lag, random walk |
+| Signal scoring | 6 | Edge, momentum, volume, composite |
+| Config | 3 | Env loading |
 
 ## Database Schema
 
@@ -243,31 +379,26 @@ CREATE TABLE signals (
 );
 ```
 
-## Tests
+## Roadmap
 
-```bash
-# Run all 55 tests
-python -m pytest tests/ -q
+- [x] Real-time Binance price streaming
+- [x] Polymarket odds polling via CLOB
+- [x] Divergence detection with composite scoring
+- [x] Council of 3 LLMs with short-circuit logic
+- [x] Paper trading with full trade logging
+- [x] Simulation mode for development
+- [x] Web dashboard (FastAPI)
+- [x] Thinking-mode LLM support
+- [ ] Live trading via Polymarket CLOB
+- [ ] WebSocket reconnection logic
+- [ ] Position exit / take-profit / stop-loss
+- [ ] Backtesting framework using signal history
+- [ ] Multi-timeframe momentum analysis
 
-# Run specific module
-python -m pytest tests/test_simulation.py -v
-```
+## License
 
-## Current Status
+This project is licensed under the [MIT License](LICENSE).
 
-- **Paper trading**: Fully functional end-to-end pipeline
-- **Simulation mode**: Working — synthetic markets fire divergence signals within seconds, council evaluates, paper trades execute
-- **LLM integration**: 3 models via Ollama Cloud with thinking-mode support
-- **Live trading**: Scaffolded (`OrderManager` + `PolymarketClient`) but not wired in `agent.py`
-- **Binance connectivity**: Requires direct access or VPN (blocked by some ISPs)
-- **Dashboard**: FastAPI at port 8081 with trade history and P&L summary
+## Author
 
-## Dependencies
-
-```
-fastapi, uvicorn[standard], jinja2     # Web dashboard
-httpx, python-binance                  # Data feeds
-py-clob-client==0.34.4, web3, eth-account  # Polymarket execution
-pydantic, aiosqlite, python-dotenv     # Core infrastructure
-pytest, pytest-asyncio                 # Testing
-```
+**Adityo Nugroho** ([@adityonugrohoid](https://github.com/adityonugrohoid))
