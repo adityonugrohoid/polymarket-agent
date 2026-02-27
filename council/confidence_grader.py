@@ -42,12 +42,18 @@ class ConfidenceGrader:
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.3,
-                max_tokens=512,
+                max_tokens=4096,
             )
             latency = (time.monotonic() - start) * 1000
 
+            response = result.get("response", "").strip()
+            thinking = result.get("thinking", "").strip()
             merged = result["merged"]
-            return self._parse(merged, latency)
+            logger.debug("Confidence grader raw", extra={
+                "response_len": len(response),
+                "thinking_len": len(thinking),
+            })
+            return self._parse(response, thinking, merged, latency)
 
         except Exception as e:
             latency = (time.monotonic() - start) * 1000
@@ -59,21 +65,37 @@ class ConfidenceGrader:
                 latency_ms=latency,
             )
 
-    def _parse(self, text: str, latency_ms: float) -> ConfidenceGrade:
-        """Parse LLM response into ConfidenceGrade."""
-        clean = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    def _parse(
+        self, response: str, thinking: str, merged: str, latency_ms: float
+    ) -> ConfidenceGrade:
+        """Parse LLM response into ConfidenceGrade.
 
-        conf_match = CONFIDENCE_PATTERN.search(clean)
-        reasoning_match = REASONING_PATTERN.search(clean)
+        Strategy: if response field has structured output, use it (clean).
+        Otherwise fall back to last match in full text (thinking + response).
+        """
+        # Prefer response field (clean, structured output)
+        conf_matches = CONFIDENCE_PATTERN.findall(response) if response else []
+        reasoning_matches = REASONING_PATTERN.findall(response) if response else []
+
+        # Fall back to full merged text, take last match
+        if not conf_matches:
+            conf_matches = CONFIDENCE_PATTERN.findall(merged)
+        if not reasoning_matches:
+            reasoning_matches = REASONING_PATTERN.findall(merged)
 
         confidence = 0.0  # fail-safe = low confidence = SKIP
-        if conf_match:
+        if conf_matches:
             try:
-                confidence = max(0.0, min(1.0, float(conf_match.group(1))))
+                confidence = max(0.0, min(1.0, float(conf_matches[-1])))
             except ValueError:
                 pass
 
-        reasoning = reasoning_match.group(1).strip() if reasoning_match else clean[:200]
+        reasoning = ""
+        if reasoning_matches:
+            reasoning = reasoning_matches[-1].strip()[:500]
+        else:
+            clean = re.sub(r"<think>.*?</think>", "", merged, flags=re.DOTALL).strip()
+            reasoning = clean[:200]
 
         return ConfidenceGrade(
             confidence=confidence,

@@ -1,79 +1,38 @@
 """Prompt templates for the Council of Models."""
 
-SENTIMENT_PROMPT = """You are a crypto market sentiment analyst. Analyze the following market signal and determine the sentiment direction.
+SENTIMENT_PROMPT = """Crypto market sentiment analyst. Classify the sentiment for this signal.
 
-MARKET DATA:
-- Symbol: {symbol}
-- Current Price: ${price:,.2f}
-- Price Momentum: {momentum_pct:+.2f}% (over recent window)
-- Direction: {direction}
-- Polymarket Odds (current): {odds_midpoint:.2f}
-- Implied Fair Odds: {implied_fair_odds:.2f}
-- Edge: {edge_pct:+.2f}%
+{symbol} | Price: ${price:,.2f} | Momentum: {momentum_pct:+.2f}% | Direction: {direction}
+Odds: {odds_midpoint:.2f} | Fair: {implied_fair_odds:.2f} | Edge: {edge_pct:+.2f}%
 
-Based on the price momentum and market dynamics, classify the sentiment:
-
-Respond with EXACTLY one of: BULLISH, BEARISH, or NEUTRAL
-Then on the next line, provide a brief 1-sentence reasoning.
-
-Format:
-SENTIMENT: <BULLISH|BEARISH|NEUTRAL>
-REASONING: <your reasoning>
+Output exactly two lines, nothing else:
+SENTIMENT: [BULLISH or BEARISH or NEUTRAL]
+REASONING: [one sentence why]
 """
 
-CONFIDENCE_PROMPT = """You are a quantitative confidence grader for crypto prediction markets. Given the following signal and sentiment analysis, rate your confidence that this trade opportunity is genuine (not noise).
+CONFIDENCE_PROMPT = """Crypto trade confidence grader. Rate if this opportunity is genuine or noise.
 
-MARKET DATA:
-- Symbol: {symbol}
-- Current Price: ${price:,.2f}
-- Price Momentum: {momentum_pct:+.2f}%
-- Polymarket Odds: {odds_midpoint:.2f}
-- Implied Fair Odds: {implied_fair_odds:.2f}
-- Edge: {edge_pct:+.2f}%
-- Signal Score: {signal_score:.2f}
+{symbol} | Price: ${price:,.2f} | Momentum: {momentum_pct:+.2f}%
+Odds: {odds_midpoint:.2f} | Fair: {implied_fair_odds:.2f} | Edge: {edge_pct:+.2f}% | Score: {signal_score:.2f}
+Sentiment: {sentiment} — {sentiment_reasoning}
 
-SENTIMENT ANALYSIS:
-- Sentiment: {sentiment}
-- Reasoning: {sentiment_reasoning}
+Consider: edge vs 0.44% fees, momentum sustainability, sentiment alignment.
 
-Rate your confidence from 0.0 (no confidence, likely noise) to 1.0 (very high confidence, clear mispricing).
-
-Consider:
-1. Is the edge large enough to overcome fees (0.44%)?
-2. Is the momentum sustained or a blip?
-3. Does the sentiment align with the price direction?
-
-Respond with EXACTLY this format:
-CONFIDENCE: <float 0.0-1.0>
-REASONING: <your reasoning>
+Output exactly two lines, nothing else:
+CONFIDENCE: [number between 0.0 and 1.0]
+REASONING: [one sentence why]
 """
 
-TRADE_JUDGE_PROMPT = """You are the final trade judge for a crypto prediction market bot. You make the TRADE or SKIP decision.
+TRADE_JUDGE_PROMPT = """Final trade judge. Decide TRADE or SKIP.
 
-MARKET DATA:
-- Symbol: {symbol}
-- Current Price: ${price:,.2f}
-- Price Momentum: {momentum_pct:+.2f}%
-- Polymarket Odds: {odds_midpoint:.2f}
-- Implied Fair Odds: {implied_fair_odds:.2f}
-- Edge: {edge_pct:+.2f}%
-- Signal Score: {signal_score:.2f}
+{symbol} | Price: ${price:,.2f} | Momentum: {momentum_pct:+.2f}%
+Odds: {odds_midpoint:.2f} | Fair: {implied_fair_odds:.2f} | Edge: {edge_pct:+.2f}% | Score: {signal_score:.2f}
+Sentiment: {sentiment} — {sentiment_reasoning}
+Confidence: {confidence:.2f} — {confidence_reasoning}
+Max size: ${max_position_size:.0f} | Available: ${available_capital:.0f} | Fees: ~0.44%
 
-COUNCIL ANALYSIS:
-- Sentiment: {sentiment}
-- Sentiment Reasoning: {sentiment_reasoning}
-- Confidence: {confidence:.2f}
-- Confidence Reasoning: {confidence_reasoning}
-
-RISK LIMITS:
-- Max position size: ${max_position_size:.0f}
-- Available capital: ${available_capital:.0f}
-- Trading fees: ~0.44%
-
-Make your decision. If TRADE, specify the dollar amount (between $5 and ${max_position_size:.0f}).
-
-Respond with EXACTLY this format:
-DECISION: <TRADE|SKIP>
-SIZE: <dollar amount or 0>
-REASONING: <your reasoning>
+Output exactly three lines, nothing else:
+DECISION: [TRADE or SKIP]
+SIZE: [dollar amount between 5 and {max_position_size:.0f}, or 0 if SKIP]
+REASONING: [one sentence why]
 """

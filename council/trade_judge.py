@@ -63,12 +63,14 @@ class TradeJudge:
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.2,
-                max_tokens=512,
+                max_tokens=2048,
             )
             latency = (time.monotonic() - start) * 1000
 
+            response = result.get("response", "").strip()
+            thinking = result.get("thinking", "").strip()
             merged = result["merged"]
-            return self._parse(merged, latency)
+            return self._parse(response, thinking, merged, latency)
 
         except Exception as e:
             latency = (time.monotonic() - start) * 1000
@@ -81,27 +83,40 @@ class TradeJudge:
                 latency_ms=latency,
             )
 
-    def _parse(self, text: str, latency_ms: float) -> TradeVerdict:
-        """Parse LLM response into TradeVerdict."""
-        clean = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    def _parse(
+        self, response: str, thinking: str, merged: str, latency_ms: float
+    ) -> TradeVerdict:
+        """Parse LLM response into TradeVerdict.
 
-        decision_match = DECISION_PATTERN.search(clean)
-        size_match = SIZE_PATTERN.search(clean)
-        reasoning_match = REASONING_PATTERN.search(clean)
+        Strategy: if response field has structured output, use it (clean).
+        Otherwise fall back to last match in full text (thinking + response).
+        """
+        # Prefer response field (clean, structured output)
+        decision_matches = DECISION_PATTERN.findall(response) if response else []
+        size_matches = SIZE_PATTERN.findall(response) if response else []
+        reasoning_matches = REASONING_PATTERN.findall(response) if response else []
+
+        # Fall back to full merged text, take last match
+        if not decision_matches:
+            decision_matches = DECISION_PATTERN.findall(merged)
+        if not size_matches:
+            size_matches = SIZE_PATTERN.findall(merged)
+        if not reasoning_matches:
+            reasoning_matches = REASONING_PATTERN.findall(merged)
 
         action = TradeAction.SKIP  # fail-safe
         size_usd = 0.0
 
-        if decision_match:
-            raw = decision_match.group(1).upper()
+        if decision_matches:
+            raw = decision_matches[-1].upper()
             try:
                 action = TradeAction(raw)
             except ValueError:
                 action = TradeAction.SKIP
 
-        if action == TradeAction.TRADE and size_match:
+        if action == TradeAction.TRADE and size_matches:
             try:
-                size_usd = float(size_match.group(1))
+                size_usd = float(size_matches[-1])
                 # Clamp to position limits
                 size_usd = max(5.0, min(size_usd, self.max_position_size))
             except ValueError:
@@ -112,9 +127,10 @@ class TradeJudge:
             action = TradeAction.SKIP
 
         reasoning = ""
-        if reasoning_match:
-            reasoning = reasoning_match.group(1).strip()[:500]
+        if reasoning_matches:
+            reasoning = reasoning_matches[-1].strip()[:500]
         else:
+            clean = re.sub(r"<think>.*?</think>", "", merged, flags=re.DOTALL).strip()
             reasoning = clean[:200]
 
         return TradeVerdict(

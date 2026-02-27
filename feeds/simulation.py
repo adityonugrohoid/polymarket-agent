@@ -217,9 +217,9 @@ class SimulatedPriceFeed:
 
         while self._running:
             for symbol, price in self._prices.items():
-                # Random walk: stddev 0.3% per tick with slight drift
-                # Over 20 ticks this produces ~1-2% momentum swings
-                change_pct = random.gauss(0.03, 0.3)
+                # Random walk: stddev 0.8% per tick with slight drift
+                # Over 10 ticks this produces ~3-5% momentum swings
+                change_pct = random.gauss(0.05, 0.8)
                 price = price * (1 + change_pct / 100)
                 self._prices[symbol] = price
 

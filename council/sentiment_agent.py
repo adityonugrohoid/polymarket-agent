@@ -38,12 +38,14 @@ class SentimentAgent:
                 messages=[{"role": "user", "content": prompt}],
                 model=self.model,
                 temperature=0.3,
-                max_tokens=256,
+                max_tokens=2048,
             )
             latency = (time.monotonic() - start) * 1000
 
+            response = result.get("response", "").strip()
+            thinking = result.get("thinking", "").strip()
             merged = result["merged"]
-            return self._parse(merged, latency)
+            return self._parse(response, thinking, merged, latency)
 
         except Exception as e:
             latency = (time.monotonic() - start) * 1000
@@ -55,23 +57,38 @@ class SentimentAgent:
                 latency_ms=latency,
             )
 
-    def _parse(self, text: str, latency_ms: float) -> SentimentResult:
-        """Parse LLM response into SentimentResult."""
-        # Strip <think> tags
-        clean = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    def _parse(
+        self, response: str, thinking: str, merged: str, latency_ms: float
+    ) -> SentimentResult:
+        """Parse LLM response into SentimentResult.
 
-        sentiment_match = SENTIMENT_PATTERN.search(clean)
-        reasoning_match = REASONING_PATTERN.search(clean)
+        Strategy: if response field has structured output, use it (clean).
+        Otherwise fall back to last match in full text (thinking + response).
+        """
+        # Prefer response field (clean, structured output)
+        sentiment_matches = SENTIMENT_PATTERN.findall(response) if response else []
+        reasoning_matches = REASONING_PATTERN.findall(response) if response else []
+
+        # Fall back to full merged text, take last match
+        if not sentiment_matches:
+            sentiment_matches = SENTIMENT_PATTERN.findall(merged)
+        if not reasoning_matches:
+            reasoning_matches = REASONING_PATTERN.findall(merged)
 
         sentiment = Sentiment.NEUTRAL  # fail-safe
-        if sentiment_match:
-            raw = sentiment_match.group(1).upper()
+        if sentiment_matches:
+            raw = sentiment_matches[-1].upper()
             try:
                 sentiment = Sentiment(raw)
             except ValueError:
                 pass
 
-        reasoning = reasoning_match.group(1).strip() if reasoning_match else clean[:200]
+        reasoning = ""
+        if reasoning_matches:
+            reasoning = reasoning_matches[-1].strip()[:500]
+        else:
+            clean = re.sub(r"<think>.*?</think>", "", merged, flags=re.DOTALL).strip()
+            reasoning = clean[:200]
 
         return SentimentResult(
             sentiment=sentiment,

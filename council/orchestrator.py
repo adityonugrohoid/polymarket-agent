@@ -51,6 +51,7 @@ class CouncilOrchestrator:
             "Council: sentiment result",
             extra={
                 "sentiment": sentiment.sentiment.value,
+                "reasoning": sentiment.reasoning,
                 "latency_ms": round(sentiment.latency_ms),
             },
         )
@@ -62,6 +63,7 @@ class CouncilOrchestrator:
             "Council: confidence result",
             extra={
                 "confidence": confidence.confidence,
+                "reasoning": confidence.reasoning,
                 "latency_ms": round(confidence.latency_ms),
             },
         )
