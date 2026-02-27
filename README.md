@@ -53,49 +53,45 @@
 
 ## Architecture
 
-```
-┌──────────────────┐     ┌──────────────────┐
-│  Binance WebSocket│     │  Polymarket CLOB │
-│  (or Simulated)  │     │  (or Simulated)  │
-└────────┬─────────┘     └────────┬─────────┘
-         │ price_queue            │ odds_queue
-         ▼                        ▼
-┌─────────────────────────────────────────────┐
-│              Feed Aggregator                │
-│         (pairs prices + odds by symbol)     │
-└────────────────────┬────────────────────────┘
-                     │ paired_queue
-                     ▼
-┌─────────────────────────────────────────────┐
-│           Divergence Detector               │
-│   momentum → implied odds → edge → score   │
-└────────────────────┬────────────────────────┘
-                     │ signal_queue
-                     ▼
-┌─────────────────────────────────────────────┐
-│          Council of Models                  │
-│                                             │
-│  ┌─────────────┐  ┌──────────────┐          │
-│  │  Sentiment   │→│  Confidence   │───┐     │
-│  │  (nemotron)  │  │  (qwen3)     │   │     │
-│  └─────────────┘  └──────────────┘   │     │
-│                                 < threshold? │
-│                                  ↓ yes  ↓ no│
-│                                SKIP  ┌──────┐│
-│                                      │Judge ││
-│                                      │(gpt) ││
-│                                      └──┬───┘│
-└─────────────────────────────────────────┼────┘
-                                          ▼
-┌─────────────────────────────────────────────┐
-│  Execution (Paper Trader / Order Manager)   │
-│  → Risk checks → Fill → Log to SQLite      │
-└────────────────────┬────────────────────────┘
-                     ▼
-┌─────────────────────────────────────────────┐
-│         FastAPI Dashboard (:8081)            │
-│      trades, P&L, open positions            │
-└─────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Feeds
+        B["Binance WebSocket<br/><i>(or Simulated)</i>"]
+        P["Polymarket CLOB<br/><i>(or Simulated)</i>"]
+    end
+
+    B -->|price_queue| FA["Feed Aggregator<br/><i>pairs prices + odds by symbol</i>"]
+    P -->|odds_queue| FA
+
+    FA -->|paired_queue| DD["Divergence Detector<br/><i>momentum → implied odds → edge → score</i>"]
+
+    DD -->|signal_queue| S["Sentiment Agent<br/><code>nemotron-3-nano:30b</code>"]
+
+    subgraph Council["Council of Models"]
+        S -->|SentimentResult| C["Confidence Grader<br/><code>qwen3-next:80b</code>"]
+        C -->|"confidence ≥ threshold"| J["Trade Judge<br/><code>gpt-oss:120b</code>"]
+        C -->|"confidence < threshold"| SKIP["Short-circuit SKIP"]
+    end
+
+    J -->|TradeVerdict| EX["Execution<br/><i>Paper Trader / Order Manager</i><br/>risk checks → fill → log"]
+    SKIP -.->|no trade| EX
+
+    EX --> DB[("SQLite<br/>trades + signals")]
+    DB --> DASH["FastAPI Dashboard<br/><code>:8081</code>"]
+
+    style Council fill:#1a1a2e,stroke:#e94560,stroke-width:2px,color:#fff
+    style Feeds fill:#0f3460,stroke:#16213e,stroke-width:1px,color:#fff
+    style B fill:#0f3460,color:#fff
+    style P fill:#0f3460,color:#fff
+    style FA fill:#16213e,color:#fff
+    style DD fill:#16213e,color:#fff
+    style S fill:#533483,color:#fff
+    style C fill:#533483,color:#fff
+    style J fill:#533483,color:#fff
+    style SKIP fill:#e94560,color:#fff
+    style EX fill:#0f3460,color:#fff
+    style DB fill:#16213e,color:#fff
+    style DASH fill:#16213e,color:#fff
 ```
 
 ## Getting Started
