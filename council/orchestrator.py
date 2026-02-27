@@ -44,6 +44,19 @@ class CouncilOrchestrator:
         """Run the full council pipeline."""
         start = time.monotonic()
 
+        # Log signal data
+        logger.info(
+            "Council: evaluating signal",
+            extra={
+                "symbol": signal.symbol,
+                "price": f"${signal.price:,.2f}",
+                "momentum": f"{signal.price_momentum_pct:+.2f}%",
+                "edge": f"{signal.edge_pct:+.2f}%",
+                "score": signal.signal_score,
+                "direction": signal.direction,
+            },
+        )
+
         # Step 1: Sentiment
         logger.info("Council: running sentiment agent", extra={"symbol": signal.symbol})
         sentiment = await self.sentiment_agent.analyze(signal)
