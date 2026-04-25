@@ -5,9 +5,9 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-55%20passed-brightgreen.svg)](#testing)
-[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Status](https://img.shields.io/badge/status-active-success.svg)](#)
 
-**An autonomous crypto trading agent that detects price divergences between Binance and Polymarket prediction markets, then runs a council of 3 LLMs to make intelligent trade decisions.**
+**Autonomous crypto trading agent that detects price divergences between Binance and Polymarket prediction markets, then runs a council of 3 LLMs to decide trades.**
 
 [Getting Started](#getting-started) | [Architecture](#architecture) | [Configuration](#configuration) | [Examples](#example-output)
 
@@ -15,14 +15,18 @@
 
 ---
 
+> **Risk disclaimer:** trading prediction markets and cryptocurrencies carries significant risk of loss. This project is provided for research and educational purposes only. Default mode is **paper trading**. Use at your own risk.
+
 ## Table of Contents
 
 - [Features](#features)
+- [Tech Stack](#tech-stack)
 - [Architecture](#architecture)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
   - [Configuration](#configuration)
+  - [Usage](#usage)
 - [How It Works](#how-it-works)
   - [Data Feeds](#1-data-feeds)
   - [Divergence Detection](#2-divergence-detection)
@@ -32,6 +36,7 @@
 - [Simulation Mode](#simulation-mode)
 - [Example Output](#example-output)
 - [Project Structure](#project-structure)
+- [Architectural Decisions](#architectural-decisions)
 - [Testing](#testing)
 - [Database Schema](#database-schema)
 - [Roadmap](#roadmap)
@@ -40,16 +45,33 @@
 
 ## Features
 
-- **Real-time divergence detection** between Binance spot prices and Polymarket prediction market odds
-- **Council of 3 LLMs** — sentiment, confidence, and trade judge — with structured reasoning at every step
-- **Thinking-mode support** for reasoning models (extended thinking parsed from both response and thinking fields)
-- **Short-circuit logic** to skip expensive LLM calls when confidence is low
+- **Real-time divergence detection** between Binance spot prices and Polymarket prediction-market odds
+- **Council of 3 LLMs** — sentiment, confidence, trade judge — with structured reasoning at every step
+- **Thinking-mode support** — parses extended-thinking output from reasoning models (last-match strategy avoids echoed prompt content)
+- **Short-circuit logic** to skip the expensive trade-judge call when confidence is below threshold
 - **Risk management** with per-trade limits, portfolio caps, and per-symbol cooldowns
-- **Paper trading** with full trade lifecycle logging to SQLite
-- **Simulation mode** with synthetic markets for development without live APIs
-- **Web dashboard** (FastAPI) for real-time monitoring of trades and P&L
+- **Paper trading** with full trade lifecycle logged to SQLite (signal → council reasoning → fill → P&L)
+- **Simulation mode** with synthetic markets so the full pipeline runs end-to-end without live APIs
+- **FastAPI dashboard** for real-time monitoring of trades and P&L
 - **Async-first** architecture using `asyncio` throughout
 - **55 tests** covering all pipeline components
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.12+ |
+| Runtime | `asyncio` event loop |
+| LLM client | Ollama (cloud or local) |
+| Sentiment model | `nemotron-3-nano:30b` |
+| Confidence grader | `qwen3-next:80b` |
+| Trade judge | `gpt-oss:120b` |
+| Price feed | Binance WebSocket |
+| Odds feed | Polymarket CLOB midpoint API |
+| Storage | SQLite via `aiosqlite` |
+| Config | Pydantic settings |
+| Dashboard | FastAPI on `:8081` |
+| Tests | `pytest`, `pytest-asyncio` |
 
 ## Architecture
 
@@ -99,8 +121,8 @@ graph TD
 ### Prerequisites
 
 - Python 3.12+
-- [Ollama](https://ollama.com) API key (cloud) or local Ollama instance
-- Binance WebSocket access (or use simulation mode)
+- [Ollama](https://ollama.com) API key (cloud) or a local Ollama instance
+- Binance WebSocket access (or stay in simulation mode — no external creds needed)
 
 ### Installation
 
@@ -176,7 +198,7 @@ python agent.py
 ### 1. Data Feeds
 
 - **Binance WebSocket** streams real-time prices for BTC, ETH, SOL with rolling 20-tick momentum
-- **Polymarket CLOB** polls prediction market odds every 5s via midpoint API
+- **Polymarket CLOB** polls prediction-market odds every 5s via the midpoint API
 - **Feed Aggregator** pairs each price tick with the latest odds for the same symbol
 
 ### 2. Divergence Detection
@@ -198,18 +220,18 @@ Three LLMs evaluate each signal sequentially:
 | # | Agent | Model | Role | Latency |
 |---|-------|-------|------|---------|
 | 1 | Sentiment | `nemotron-3-nano:30b` | Classify BULLISH / BEARISH / NEUTRAL | ~1.5s |
-| 2 | Confidence | `qwen3-next:80b` | Grade signal quality 0.0-1.0 | ~12-20s |
+| 2 | Confidence | `qwen3-next:80b` | Grade signal quality 0.0–1.0 | ~12–20s |
 | 3 | Trade Judge | `gpt-oss:120b` | Final TRADE/SKIP + position sizing | ~2s |
 
-**Short-circuit**: If confidence < `MIN_CONFIDENCE`, the trade judge is skipped entirely.
+**Short-circuit:** if confidence < `MIN_CONFIDENCE`, the trade judge is skipped entirely.
 
-**Thinking-mode support**: All parsers handle models that use extended thinking (`think=True`). When a response field exists, it's parsed directly. When models put everything in the thinking field, the parser searches the full text and takes the last match to avoid echoed prompt content.
+**Thinking-mode support:** all parsers handle models that use extended thinking (`think=True`). When a response field exists, it's parsed directly. When the model puts everything in the thinking field, the parser searches the full text and takes the **last** match to avoid echoed prompt content.
 
 ### 4. Execution
 
 | Mode | Status | Description |
 |------|--------|-------------|
-| Paper | **Active** | Simulates fills at market midpoint, logs to SQLite with full council reasoning |
+| Paper | **Active (default)** | Simulates fills at market midpoint; logs to SQLite with full council reasoning |
 | Live | Scaffolded | `OrderManager` + `PolymarketClient` for authenticated CLOB orders on Polygon |
 
 ### 5. Risk Management
@@ -225,7 +247,7 @@ Enforced at the execution layer before every trade:
 
 ## Simulation Mode
 
-Since Polymarket currently has no short-term crypto price markets (only long-dated events like "BTC hits $150k by June 2026"), the agent includes a full simulation layer.
+Polymarket currently has no short-term crypto price markets (only long-dated events like *"BTC hits $150k by June 2026"*), so the agent ships with a full simulation layer.
 
 Set `SIMULATION_MODE=true` to activate:
 
@@ -242,7 +264,7 @@ raw_odds = 0.5 + (distance * 10)          # 1% above strike → 0.6 odds
 odds = clamp(raw_odds + noise, 0.05, 0.95)
 ```
 
-The simulation is fully self-contained (no external APIs except Ollama). Removable by deleting `feeds/simulation.py` and the config branch in `agent.py`.
+The simulation is fully self-contained (no external APIs except Ollama) and removable by deleting `feeds/simulation.py` and the config branch in `agent.py`.
 
 ## Example Output
 
@@ -326,6 +348,32 @@ polymarket-agent/
 └── requirements.txt                # Python dependencies
 ```
 
+## Architectural Decisions
+
+### 1. Council of three, not one general-purpose call
+
+**Decision:** Pipeline three smaller, specialized models (sentiment → confidence → judge) instead of one large general-purpose call.
+
+**Reasoning:** Each model has a tight, easy-to-evaluate output schema (single label / single float / TRADE+size). Concatenating their reasoning into the trade record makes per-decision auditing trivial. Cost is the extra latency of three round-trips, mitigated by the short-circuit when confidence is low.
+
+### 2. Short-circuit before the expensive judge
+
+**Decision:** Skip the trade-judge call entirely when the confidence grader returns < `MIN_CONFIDENCE`.
+
+**Reasoning:** The judge (`gpt-oss:120b`) is the slowest of the three. Most signals never clear the confidence bar — gating eliminates the dominant-cost call on the dominant case, dropping average per-signal LLM cost by an order of magnitude.
+
+### 3. Last-match parsing for thinking-mode models
+
+**Decision:** When parsing responses from reasoning models that emit extended `thinking` text, the parser scans the whole text and takes the **last** match.
+
+**Reasoning:** Reasoning models often echo earlier prompt content or intermediate hypotheses inside their thinking trace. Taking the last match correlates strongly with the model's final decision, sidestepping a class of brittle regex-anchoring bugs we hit early on.
+
+### 4. Simulation mode as a first-class build target
+
+**Decision:** Ship a complete synthetic feed/market layer that runs the full pipeline without external APIs.
+
+**Reasoning:** Polymarket has no short-term crypto markets today, so the live target is a future state. Simulation lets development, tests, and CI exercise the *whole* council + execution flow now, with one config flag rather than a separate harness.
+
 ## Testing
 
 ```bash
@@ -383,7 +431,7 @@ CREATE TABLE signals (
 - [x] Council of 3 LLMs with short-circuit logic
 - [x] Paper trading with full trade logging
 - [x] Simulation mode for development
-- [x] Web dashboard (FastAPI)
+- [x] FastAPI dashboard
 - [x] Thinking-mode LLM support
 - [ ] Live trading via Polymarket CLOB
 - [ ] WebSocket reconnection logic
@@ -393,8 +441,11 @@ CREATE TABLE signals (
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
 ## Author
 
 **Adityo Nugroho** ([@adityonugrohoid](https://github.com/adityonugrohoid))
+
+- Portfolio: [adityonugrohoid.github.io](https://adityonugrohoid.github.io)
+- LinkedIn: [linkedin.com/in/adityonugrohoid](https://www.linkedin.com/in/adityonugrohoid/)
