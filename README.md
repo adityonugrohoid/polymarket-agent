@@ -1,11 +1,11 @@
 <div align="center">
 
-# Polymarket AI Trading Agent
+# Polymarket Agent
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Autonomous crypto trading agent: detects Binance vs Polymarket price divergences, runs a 3-LLM council to decide each trade.**
+**Autonomous crypto trading agent: spots Binance vs Polymarket price divergences, runs a 3-LLM council to decide each trade**
 
 [Getting Started](#getting-started) | [Usage](#usage) | [Architecture](#architecture)
 
@@ -29,7 +29,6 @@
 - [Architectural Decisions](#architectural-decisions)
 - [Project Structure](#project-structure)
 - [Testing](#testing)
-- [Related Projects](#related-projects)
 - [License](#license)
 - [Author](#author)
 
